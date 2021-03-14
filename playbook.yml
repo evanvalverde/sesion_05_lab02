@@ -1,0 +1,98 @@
+---
+- name: "Implementa el lab02 de la sesion 5 del curso Ansible/AWX 2021: Bucles"
+  hosts: nodo02
+  vars:
+    archivos:
+      - arch_01
+      - arch_02
+      - arch_03
+      - arch_04
+      - arch_05  
+    dir_origen: "/tmp/archivos_lab02/"
+    dir_destino: "/mnt/disco02/"
+    archivo_comprimido: "archivos_lab02.zip"
+  vars_files:
+    "vars/defaults.yml"
+  tasks:
+    - name: "Instala la paquetería"        
+      yum:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - zip
+        - unzip
+        - gzip
+        - bzip2
+
+    - name: Crea el directorio {{ dir_origen }}
+      file:
+        path: "{{ dir_origen }}"
+        state: directory
+
+    - name: "Crea los archivos con un bucle dentro de {{ dir_origen }}"
+      file:
+        path: "{{ dir_origen }}{{ item }}"
+        state: touch
+      loop: "{{ archivos }}"
+
+    - name: "Crea la partición"
+      parted:
+        device: "{{ item.value['dispositivo'] }}"
+        number: 1
+        flags: [ lvm ]
+        state: present
+      loop: "{{ discos|dict2items }}"
+      # Comprobar con lsblk (debe aparecer una particion sdb1 y sdc1)
+
+    - name: "Crea el grupo de volumenes"
+      lvg:
+        vg: "{{ item.value['volum_group'] }}"
+        pvs: "{{ item.value['volumen_fisico'] }}"
+        pesize: "{{ item.value['tamaño_vg'] }}"
+      loop: "{{ discos|dict2items }}"
+      # Comprobar con pvs (debe aparecer el VG creado)
+
+    - name: "Crea el volumen logico"
+      lvol:
+        vg: "{{ item.value['volum_group'] }}"
+        lv: "lv_{{ item.value['volum_group'] }}"
+        size: "{{ item.value['tamaño_lv'] }}"
+        resizefs: true
+        force: yes
+        state: present
+      loop: "{{ discos|dict2items }}"
+      # Falla con tamaño_lv: "80%VG"
+      # Comprobar con lvdisplay
+
+    - name: "Configura el sistema de ficheros"
+      filesystem:
+        fstype: "{{ item.value['formato_fs'] }}"
+        dev: "/dev/mapper/{{ item.value['volum_group'] }}-lv_{{ item.value['volum_group'] }}"
+      loop: "{{ discos|dict2items }}"
+      # Comprobar con lvdisplay
+
+    - name: "Crea la ruta de montaje"
+      file:
+        path: "{{ item.value['punto_montaje'] }}"
+        mode: 0765
+        recurse: yes
+        state: directory
+      loop: "{{ discos|dict2items }}"
+
+    - name: "Monta el sistema de ficheros"
+      mount:
+        path: "{{ item.value['punto_montaje'] }}"
+        src: "/dev/mapper/{{ item.value['volum_group'] }}-lv_{{ item.value['volum_group'] }}"
+        fstype: "{{ item.value['formato_fs'] }}"
+        state: mounted
+      loop: "{{ discos|dict2items }}"
+      # Comprobar con lvdisplay
+    
+    - name: "Comprime todos los archivos en {{ dir_origen }} con zip y lo deja en el directorio {{ dir_destino }}"
+      archive:
+        path: "{{ dir_origen }}"
+        dest: "{{ dir_destino }}{{ archivo_comprimido }}"
+        format: zip
+        # Listar el contenido:
+        # zip -sf archivo.zip
+...
